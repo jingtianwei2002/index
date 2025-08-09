@@ -24,10 +24,11 @@
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
         
-        // 生成唯一会话ID
+        // 生成唯一会话ID和用户ID - 确保不为undefined
         const sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
         const userId = 'jingtianwei2002';
         console.log('会话ID:', sessionId);
+        console.log('用户ID:', userId);
 
         // 动态加载WebGazer
         async function loadWebGazerScript() {
@@ -106,7 +107,7 @@
             padding: 10px 15px;
             border-radius: 10px;
             z-index: 2000;
-            width: 260px;
+            width: 280px;
             font-size: 12px;
         }
         
@@ -213,7 +214,7 @@
         #webgazerVideoContainer {
             position: fixed !important;
             top: 10px !important;
-            right: 290px !important;
+            right: 320px !important;
             z-index: 1999 !important;
             width: 240px !important;
             height: 180px !important;
@@ -231,12 +232,22 @@
             height: 20px;
             border-radius: 25px;
             background-color: red;
-            opacity: 0.2;
-            border-color: black;
-            border-style: solid;
+            opacity: 0.8;
+            border: 2px solid black;
             position: fixed;
             z-index: 99999;
             cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .Calibration:hover {
+            transform: scale(1.2);
+            background-color: #ff4444;
+        }
+        
+        .Calibration.clicked {
+            background-color: yellow !important;
+            transform: scale(0.8);
         }
         
         #Pt1 { top: 10%; left: 10%; }
@@ -297,6 +308,22 @@
             <span id="totalGazes" class="stat-value">0</span>
         </div>
         <div class="stat-item">
+            <span>眼跳次数:</span>
+            <span id="saccadeCount" class="stat-value">0</span>
+        </div>
+        <div class="stat-item">
+            <span>注视次数:</span>
+            <span id="fixationCount" class="stat-value">0</span>
+        </div>
+        <div class="stat-item">
+            <span>平均注视时间:</span>
+            <span id="avgFixationTime" class="stat-value">0ms</span>
+        </div>
+        <div class="stat-item">
+            <span>热力图快照:</span>
+            <span id="heatmapSnapshots" class="stat-value">0</span>
+        </div>
+        <div class="stat-item">
             <span>数据快照数:</span>
             <span id="snapshotCount" class="stat-value">0</span>
         </div>
@@ -337,15 +364,15 @@
     <div id="heatmapContainer"></div>
 
     <div class="calibrationDiv">
-        <input type="button" class="Calibration" id="Pt1" style="display: none;">
-        <input type="button" class="Calibration" id="Pt2" style="display: none;">
-        <input type="button" class="Calibration" id="Pt3" style="display: none;">
-        <input type="button" class="Calibration" id="Pt4" style="display: none;">
-        <input type="button" class="Calibration" id="Pt5" style="display: none;">
-        <input type="button" class="Calibration" id="Pt6" style="display: none;">
-        <input type="button" class="Calibration" id="Pt7" style="display: none;">
-        <input type="button" class="Calibration" id="Pt8" style="display: none;">
-        <input type="button" class="Calibration" id="Pt9" style="display: none;">
+        <input type="button" class="Calibration" id="Pt1" onclick="calPointClick(this)" style="display: none;">
+        <input type="button" class="Calibration" id="Pt2" onclick="calPointClick(this)" style="display: none;">
+        <input type="button" class="Calibration" id="Pt3" onclick="calPointClick(this)" style="display: none;">
+        <input type="button" class="Calibration" id="Pt4" onclick="calPointClick(this)" style="display: none;">
+        <input type="button" class="Calibration" id="Pt5" onclick="calPointClick(this)" style="display: none;">
+        <input type="button" class="Calibration" id="Pt6" onclick="calPointClick(this)" style="display: none;">
+        <input type="button" class="Calibration" id="Pt7" onclick="calPointClick(this)" style="display: none;">
+        <input type="button" class="Calibration" id="Pt8" onclick="calPointClick(this)" style="display: none;">
+        <input type="button" class="Calibration" id="Pt9" onclick="calPointClick(this)" style="display: none;">
     </div>
 
     <div id="content">
@@ -394,6 +421,10 @@
         let heatmapInstance = null;
         let gazeCount = 0;
         let snapshotCount = 0;
+        let heatmapSnapshotCount = 0;
+        let saccadeCount = 0;
+        let fixationCount = 0;
+        let totalFixationTime = 0;
         let startTime = Date.now();
         let isTracking = false;
         let webgazerReady = false;
@@ -407,11 +438,22 @@
         var isStoring = false;
         var storedPoints = {x: [], y: []};
 
+        // 眼动数据结构
         let eyeTrackingData = {
-            gazePoints: []
+            gazePoints: [],
+            saccades: [],
+            fixations: [],
+            heatmapSnapshots: []
         };
 
+        // 用于眼跳和注视检测的变量
+        let lastGazePoint = null;
+        let currentFixation = null;
+        let fixationThreshold = 50; // 像素阈值
+        let fixationTimeThreshold = 100; // 毫秒阈值
+
         let autoSaveInterval = null;
+        let heatmapSnapshotInterval = null;
 
         // 显示会话ID
         if (document.getElementById('sessionIdDisplay')) {
@@ -467,10 +509,21 @@
             debug('开始测试Firebase连接...');
             updateFirebaseStatus('测试中...', 'uploading');
             try {
-                await db.collection("connection_test").add({
-                    sessionId: sessionId,
-                    timestamp: new Date().toISOString()
-                });
+                const testDoc = {
+                    sessionId: sessionId || 'test_session',
+                    userId: userId || 'test_user',
+                    timestamp: new Date().toISOString(),
+                    testType: 'connection_test'
+                };
+                
+                // 验证数据完整性
+                for (const key in testDoc) {
+                    if (testDoc[key] === undefined) {
+                        throw new Error(`测试数据字段 '${key}' 为 undefined`);
+                    }
+                }
+                
+                await db.collection("connection_test").add(testDoc);
                 debug('Firebase连接测试成功！');
                 updateFirebaseStatus('连接正常', 'connected');
                 firebaseConnected = true;
@@ -481,7 +534,7 @@
                 debug(`Firebase连接测试失败: ${error.message}`);
                 updateFirebaseStatus('连接失败', 'disconnected');
                 firebaseConnected = false;
-                swal('失败', `Firebase连接测试失败！请检查Firebase安全规则和配置。\n\n${error.message}`, 'error');
+                swal('失败', `Firebase连接测试失败！\n\n${error.message}`, 'error');
                 return false;
             }
         }
@@ -495,11 +548,14 @@
         }
         
         // ===========================================
-        // 眼动数据处理
+        // 眼动数据处理 - 核心改进
         // ===========================================
         function gazeDataCallback(data, elapsedTime) {
-            // **修改点**：增加对data和坐标的有效性检查
             if (!isTracking || data == null || typeof data.x !== 'number' || typeof data.y !== 'number') {
+                return;
+            }
+            
+            if (isNaN(data.x) || isNaN(data.y) || data.x < 0 || data.y < 0) {
                 return;
             }
 
@@ -508,18 +564,144 @@
                 storedPoints.y.push(data.y);
             }
             
+            const timestamp = new Date().toISOString();
             let gazePoint = {
                 x: Math.floor(data.x),
                 y: Math.floor(data.y),
-                timestamp: new Date().toISOString(),
+                timestamp: timestamp,
+                elapsedTime: elapsedTime || Date.now() - startTime
             };
+
+            // 处理眼跳和注视检测
+            processSaccadeAndFixation(gazePoint);
 
             eyeTrackingData.gazePoints.push(gazePoint);
             if (heatmapInstance) {
                 heatmapInstance.addData({ x: gazePoint.x, y: gazePoint.y, value: 5 });
             }
             gazeCount++;
+            updateStatsDisplay();
+        }
+
+        function processSaccadeAndFixation(gazePoint) {
+            if (!lastGazePoint) {
+                lastGazePoint = gazePoint;
+                currentFixation = {
+                    startPoint: {...gazePoint},
+                    endPoint: {...gazePoint},
+                    startTime: gazePoint.timestamp,
+                    duration: 0,
+                    pointCount: 1
+                };
+                return;
+            }
+
+            const distance = Math.sqrt(
+                Math.pow(gazePoint.x - lastGazePoint.x, 2) + 
+                Math.pow(gazePoint.y - lastGazePoint.y, 2)
+            );
+
+            if (distance > fixationThreshold) {
+                // 检测到眼跳
+                if (currentFixation && currentFixation.pointCount > 1) {
+                    // 保存当前注视
+                    const fixationDuration = new Date(gazePoint.timestamp).getTime() - new Date(currentFixation.startTime).getTime();
+                    if (fixationDuration > fixationTimeThreshold) {
+                        currentFixation.endTime = lastGazePoint.timestamp;
+                        currentFixation.duration = fixationDuration;
+                        currentFixation.endPoint = {...lastGazePoint};
+                        
+                        eyeTrackingData.fixations.push({...currentFixation});
+                        fixationCount++;
+                        totalFixationTime += fixationDuration;
+                    }
+                }
+
+                // 记录眼跳
+                const saccade = {
+                    startPoint: {...lastGazePoint},
+                    endPoint: {...gazePoint},
+                    distance: distance,
+                    startTime: lastGazePoint.timestamp,
+                    endTime: gazePoint.timestamp,
+                    duration: new Date(gazePoint.timestamp).getTime() - new Date(lastGazePoint.timestamp).getTime(),
+                    velocity: distance / (new Date(gazePoint.timestamp).getTime() - new Date(lastGazePoint.timestamp).getTime()) * 1000 // px/s
+                };
+                
+                eyeTrackingData.saccades.push(saccade);
+                saccadeCount++;
+
+                // 开始新的注视
+                currentFixation = {
+                    startPoint: {...gazePoint},
+                    endPoint: {...gazePoint},
+                    startTime: gazePoint.timestamp,
+                    duration: 0,
+                    pointCount: 1
+                };
+            } else {
+                // 继续当前注视
+                if (currentFixation) {
+                    currentFixation.endPoint = {...gazePoint};
+                    currentFixation.pointCount++;
+                }
+            }
+
+            lastGazePoint = gazePoint;
+        }
+
+        function updateStatsDisplay() {
             document.getElementById('totalGazes').textContent = gazeCount;
+            document.getElementById('saccadeCount').textContent = saccadeCount;
+            document.getElementById('fixationCount').textContent = fixationCount;
+            document.getElementById('heatmapSnapshots').textContent = heatmapSnapshotCount;
+            
+            const avgTime = fixationCount > 0 ? Math.round(totalFixationTime / fixationCount) : 0;
+            document.getElementById('avgFixationTime').textContent = avgTime + 'ms';
+        }
+        
+        // ===========================================
+        // 热力图快照功能 - 新增
+        // ===========================================
+        function startHeatmapSnapshots() {
+            if (heatmapSnapshotInterval) clearInterval(heatmapSnapshotInterval);
+            
+            heatmapSnapshotInterval = setInterval(() => {
+                if (heatmapInstance && isTracking) {
+                    captureHeatmapSnapshot();
+                }
+            }, 1000); // 每秒一张快照
+            
+            debug('热力图快照功能已启动 (每秒)');
+        }
+
+        function stopHeatmapSnapshots() {
+            if (heatmapSnapshotInterval) {
+                clearInterval(heatmapSnapshotInterval);
+                heatmapSnapshotInterval = null;
+            }
+            debug('热力图快照功能已停止');
+        }
+
+        function captureHeatmapSnapshot() {
+            try {
+                const canvas = document.querySelector('#heatmapContainer canvas');
+                if (canvas) {
+                    const dataURL = canvas.toDataURL('image/png');
+                    const snapshot = {
+                        timestamp: new Date().toISOString(),
+                        dataURL: dataURL,
+                        gazePointsCount: gazeCount,
+                        snapshotIndex: heatmapSnapshotCount
+                    };
+                    
+                    eyeTrackingData.heatmapSnapshots.push(snapshot);
+                    heatmapSnapshotCount++;
+                    debug(`热力图快照 #${heatmapSnapshotCount} 已保存`);
+                }
+            } catch (error) {
+                debug(`热力图快照保存失败: ${error.message}`);
+            }
         }
         
         // ===========================================
@@ -528,10 +710,10 @@
         function startAutoSave() {
             if (autoSaveInterval) clearInterval(autoSaveInterval);
             
-            autoSaveInterval = setInterval(() => saveEyeTrackingData(false), 10000); // 10秒保存一次
+            autoSaveInterval = setInterval(() => saveEyeTrackingData(false), 15000); // 15秒保存一次
             
             updateCollectionStatus('进行中 (自动保存)', 'connected');
-            debug('自动保存已启动 (每10秒)');
+            debug('自动保存已启动 (每15秒)');
         }
 
         function stopAutoSave() {
@@ -548,25 +730,41 @@
                 if(isManual) swal('错误', 'Firebase未连接，无法保存数据。', 'error');
                 return;
             }
-            if (eyeTrackingData.gazePoints.length === 0) {
+            
+            const totalDataPoints = eyeTrackingData.gazePoints.length + 
+                                  eyeTrackingData.saccades.length + 
+                                  eyeTrackingData.fixations.length + 
+                                  eyeTrackingData.heatmapSnapshots.length;
+                                  
+            if (totalDataPoints === 0) {
                 debug('没有新数据需要保存');
                 if(isManual) swal('提示', '没有新的眼动数据可供保存。', 'info');
                 return;
             }
 
             const dataToSave = { ...eyeTrackingData };
-            const pointsCount = dataToSave.gazePoints.length;
 
-            // **核心修改点**：创建并检查要发送的数据对象
+            // 创建完整的数据载荷
             const payload = {
-                sessionId: sessionId,
-                userId: userId,
+                sessionId: sessionId || 'unknown_session',
+                userId: userId || 'unknown_user',
                 timestamp: new Date().toISOString(),
                 dataType: isManual ? 'manual_save' : 'auto_save',
-                gazeData: dataToSave.gazePoints
+                statistics: {
+                    totalGazePoints: dataToSave.gazePoints.length,
+                    totalSaccades: dataToSave.saccades.length,
+                    totalFixations: dataToSave.fixations.length,
+                    totalHeatmapSnapshots: dataToSave.heatmapSnapshots.length,
+                    averageFixationTime: fixationCount > 0 ? Math.round(totalFixationTime / fixationCount) : 0,
+                    sessionDuration: Date.now() - startTime
+                },
+                gazeData: dataToSave.gazePoints,
+                saccadeData: dataToSave.saccades,
+                fixationData: dataToSave.fixations,
+                heatmapData: dataToSave.heatmapSnapshots
             };
 
-            // **数据校验**：检查是否有 undefined 值
+            // 数据完整性检查
             for (const key in payload) {
                 if (payload[key] === undefined) {
                     debug(`数据保存失败：字段 '${key}' 的值是 undefined。已阻止本次保存。`);
@@ -574,30 +772,38 @@
                     if (isManual) {
                         swal('保存失败', `数据错误：字段 '${key}' 未定义，无法保存。`, 'error');
                     }
-                    return; // 阻止执行
+                    return;
                 }
             }
 
             updateCollectionStatus('保存中...', 'uploading');
             try {
-                await db.collection("eye_tracking_data").add(payload);
+                await db.collection("eye_tracking_comprehensive").add(payload);
                 
                 snapshotCount++;
                 document.getElementById('snapshotCount').textContent = snapshotCount;
                 
+                // 清空已保存的数据
                 eyeTrackingData.gazePoints = [];
+                eyeTrackingData.saccades = [];
+                eyeTrackingData.fixations = [];
+                eyeTrackingData.heatmapSnapshots = [];
                 
                 updateCollectionStatus('进行中 (自动保存)', 'connected');
-                debug(`数据快照 #${snapshotCount} (${pointsCount}个点) 保存成功`);
-                if(isManual) swal('成功', `数据已强制保存！\n本次保存了 ${pointsCount} 个注视点。`, 'success');
+                debug(`完整数据快照 #${snapshotCount} 保存成功 (${totalDataPoints}个数据点)`);
+                if(isManual) swal('成功', `完整数据已保存！\n注视点: ${payload.gazeData.length}\n眼跳: ${payload.saccadeData.length}\n注视: ${payload.fixationData.length}\n热力图: ${payload.heatmapData.length}`, 'success');
 
             } catch (error) {
                 console.error("Firebase Save Failed: ", error);
                 debug(`数据保存失败: ${error.message}`);
                 updateCollectionStatus('保存失败', 'disconnected');
-                if(isManual) swal('失败', `数据保存失败！\n请检查浏览器控制台 (F12) 获取详细错误信息。\n\n${error.message}`, 'error');
+                if(isManual) swal('失败', `数据保存失败！\n\n${error.message}`, 'error');
                 
+                // 恢复数据
                 eyeTrackingData.gazePoints = dataToSave.gazePoints.concat(eyeTrackingData.gazePoints);
+                eyeTrackingData.saccades = dataToSave.saccades.concat(eyeTrackingData.saccades);
+                eyeTrackingData.fixations = dataToSave.fixations.concat(eyeTrackingData.fixations);
+                eyeTrackingData.heatmapSnapshots = dataToSave.heatmapSnapshots.concat(eyeTrackingData.heatmapSnapshots);
             }
         }
 
@@ -628,20 +834,32 @@
                 swal('无数据', '没有收集到任何眼动数据可供导出。', 'warning');
                 return;
             }
-            const dataStr = JSON.stringify({
-                sessionId, userId,
-                exportTime: new Date().toISOString(),
-                totalGazePoints: gazeCount,
+            const exportData = {
+                sessionInfo: {
+                    sessionId, 
+                    userId,
+                    exportTime: new Date().toISOString(),
+                    sessionDuration: Date.now() - startTime
+                },
+                statistics: {
+                    totalGazePoints: gazeCount,
+                    totalSaccades: saccadeCount,
+                    totalFixations: fixationCount,
+                    totalHeatmapSnapshots: heatmapSnapshotCount,
+                    averageFixationTime: fixationCount > 0 ? Math.round(totalFixationTime / fixationCount) : 0
+                },
                 collectedData: eyeTrackingData
-            }, null, 2);
+            };
+            
+            const dataStr = JSON.stringify(exportData, null, 2);
             const dataBlob = new Blob([dataStr], {type: 'application/json'});
             const url = URL.createObjectURL(dataBlob);
             const link = document.createElement('a');
             link.href = url;
-            link.download = `eye-tracking-export-${sessionId}.json`;
+            link.download = `eye-tracking-comprehensive-${sessionId}.json`;
             link.click();
             URL.revokeObjectURL(url);
-            debug(`数据已导出为JSON文件`);
+            debug(`完整数据已导出为JSON文件`);
         }
 
         // ===========================================
@@ -695,6 +913,7 @@
                 isTracking = true;
                 startTime = Date.now();
                 
+                // 启动数据收集功能
                 if (firebaseConnected) {
                     startAutoSave();
                 } else {
@@ -702,10 +921,12 @@
                     updateCollectionStatus('本地收集中', 'uploading');
                 }
                 
+                startHeatmapSnapshots(); // 启动热力图快照
+                
                 updateStatus('数据收集中', 'ready');
                 calibrateBtn.disabled = false;
                 startBtn.textContent = '✅ 收集中';
-                debug('眼动追踪已启动');
+                debug('眼动追踪已启动 - 包含完整数据收集功能');
                 
             } catch (error) {
                 debug(`启动失败: ${error.message}`);
@@ -718,10 +939,13 @@
 
         function stopTracking() {
             if (!isTracking) return;
+            
+            // 保存最终数据
             saveEyeTrackingData(true);
 
             isTracking = false;
             stopAutoSave();
+            stopHeatmapSnapshots();
             
             try {
                 if (typeof webgazer !== 'undefined' && webgazer.isReady()) {
@@ -742,17 +966,141 @@
         }
 
         // ===========================================
-        // 校准函数
+        // 校准函数 - 修复校准点点击问题
         // ===========================================
-        function ClearCanvas(){ document.querySelectorAll('.Calibration').forEach(i => i.style.display = 'none'); }
-        function PopUpInstruction(){ if (!isTracking) { swal('提示', '请先启动眼动追踪再进行校准。', 'info'); return; } ClearCanvas(); swal({ title:"校准提示", text: "请依次点击屏幕上的9个红点进行校准。", buttons:{ confirm: "开始校准" } }).then(isConfirm => { if(isConfirm) ShowCalibrationPoint(); }); }
-        function calPointClick(node) { const id = node.id; if (!CalibrationPoints[id]){ CalibrationPoints[id]=0; } CalibrationPoints[id]++; if (CalibrationPoints[id]==1){ node.style.backgroundColor = 'yellow'; node.setAttribute('disabled', 'disabled'); PointCalibrate++; } if (PointCalibrate == 8){ document.getElementById('Pt5').style.display = ''; } if (PointCalibrate >= 9){ ClearCanvas(); calcAccuracy(); } }
-        function ShowCalibrationPoint() { document.querySelectorAll('.Calibration').forEach(i => { i.style.display = ''; }); document.getElementById('Pt5').style.display = 'none'; }
-        function ClearCalibration(){ if (typeof webgazer !== 'undefined' && webgazer.isReady()) webgazer.clearData(); document.querySelectorAll('.Calibration').forEach(i => { i.style.backgroundColor = 'red'; i.removeAttribute('disabled'); }); CalibrationPoints = {}; PointCalibrate = 0; }
-        function sleep (time) { return new Promise(resolve => setTimeout(resolve, time)); }
-        function Restart(){ if (!isTracking) { swal('提示', '请先启动眼动追踪。', 'info'); return; } document.getElementById("Accuracy").innerHTML = "等待校准..."; ClearCalibration(); PopUpInstruction(); }
-        function calcAccuracy() { swal({ title: "测量精度中", text: "请不要移动鼠标，并凝视屏幕中央5秒钟。", closeOnEsc: false, allowOutsideClick: false, closeModal: true }).then(() => { isStoring = true; storedPoints = {x: [], y: []}; sleep(5000).then(() => { isStoring = false; var past50 = [storedPoints.x, storedPoints.y]; var precision = calculatePrecision(past50); document.getElementById("Accuracy").innerHTML = `精度 | ${precision}%`; swal({ title: `您的精度测量结果是 ${precision}%`, buttons: { cancel: "重新校准", confirm: "继续" } }).then(isConfirm => { if (!isConfirm) Restart(); }); }); }); }
-        function calculatePrecision(past50Array) { var x50 = past50Array[0], y50 = past50Array[1]; if (x50.length === 0) return 0; var staringPointX = window.innerWidth / 2, staringPointY = window.innerHeight / 2; var distances = x50.map((x, i) => Math.sqrt(Math.pow(x - staringPointX, 2) + Math.pow(y50[i] - staringPointY, 2))); var maxDistance = window.innerHeight / 2; var percentages = distances.map(d => Math.max(0, 100 - (d / maxDistance * 100))); var avgPrecision = percentages.reduce((a, b) => a + b, 0) / percentages.length; return Math.round(avgPrecision); }
+        function ClearCanvas() { 
+            document.querySelectorAll('.Calibration').forEach(i => i.style.display = 'none'); 
+        }
+        
+        function PopUpInstruction() { 
+            if (!isTracking) { 
+                swal('提示', '请先启动眼动追踪再进行校准。', 'info'); 
+                return; 
+            } 
+            ClearCanvas(); 
+            swal({ 
+                title:"校准提示", 
+                text: "请依次点击屏幕上的9个红点进行校准。点击确定开始校准。", 
+                buttons:{ 
+                    cancel: "取消",
+                    confirm: "开始校准" 
+                } 
+            }).then(isConfirm => { 
+                if(isConfirm) {
+                    ShowCalibrationPoint(); 
+                }
+            }); 
+        }
+        
+        function calPointClick(node) { 
+            if (!isTracking) return;
+            
+            const id = node.id; 
+            debug(`校准点 ${id} 被点击`);
+            
+            if (!CalibrationPoints[id]){ 
+                CalibrationPoints[id] = 0; 
+            } 
+            CalibrationPoints[id]++; 
+            
+            if (CalibrationPoints[id] == 1){ 
+                node.style.backgroundColor = 'yellow'; 
+                node.classList.add('clicked');
+                node.setAttribute('disabled', 'disabled'); 
+                PointCalibrate++; 
+                debug(`校准进度: ${PointCalibrate}/9`);
+            } 
+            
+            if (PointCalibrate == 8){ 
+                document.getElementById('Pt5').style.display = 'block'; 
+            } 
+            
+            if (PointCalibrate >= 9){ 
+                debug('校准完成，开始精度测试');
+                ClearCanvas(); 
+                calcAccuracy(); 
+            } 
+        }
+        
+        function ShowCalibrationPoint() { 
+            PointCalibrate = 0;
+            CalibrationPoints = {};
+            document.querySelectorAll('.Calibration').forEach(i => { 
+                i.style.display = 'block'; 
+                i.style.backgroundColor = 'red';
+                i.classList.remove('clicked');
+                i.removeAttribute('disabled');
+            }); 
+            document.getElementById('Pt5').style.display = 'none'; 
+            debug('校准点已显示，请点击校准');
+        }
+        
+        function ClearCalibration() { 
+            if (typeof webgazer !== 'undefined' && webgazer.isReady()) {
+                webgazer.clearData(); 
+            }
+            document.querySelectorAll('.Calibration').forEach(i => { 
+                i.style.backgroundColor = 'red'; 
+                i.classList.remove('clicked');
+                i.removeAttribute('disabled'); 
+                i.style.display = 'none';
+            }); 
+            CalibrationPoints = {}; 
+            PointCalibrate = 0; 
+        }
+        
+        function sleep (time) { 
+            return new Promise(resolve => setTimeout(resolve, time)); 
+        }
+        
+        function Restart() { 
+            if (!isTracking) { 
+                swal('提示', '请先启动眼动追踪。', 'info'); 
+                return; 
+            } 
+            document.getElementById("Accuracy").innerHTML = "等待校准..."; 
+            ClearCalibration(); 
+            PopUpInstruction(); 
+        }
+        
+        function calcAccuracy() { 
+            swal({ 
+                title: "测量精度中", 
+                text: "请不要移动鼠标，并凝视屏幕中央5秒钟。", 
+                closeOnEsc: false, 
+                allowOutsideClick: false, 
+                closeModal: true 
+            }).then(() => { 
+                isStoring = true; 
+                storedPoints = {x: [], y: []}; 
+                sleep(5000).then(() => { 
+                    isStoring = false; 
+                    var past50 = [storedPoints.x, storedPoints.y]; 
+                    var precision = calculatePrecision(past50); 
+                    document.getElementById("Accuracy").innerHTML = `精度 | ${precision}%`; 
+                    swal({ 
+                        title: `您的精度测量结果是 ${precision}%`, 
+                        buttons: { 
+                            cancel: "重新校准", 
+                            confirm: "继续" 
+                        } 
+                    }).then(isConfirm => { 
+                        if (!isConfirm) Restart(); 
+                    }); 
+                }); 
+            }); 
+        }
+        
+        function calculatePrecision(past50Array) { 
+            var x50 = past50Array[0], y50 = past50Array[1]; 
+            if (x50.length === 0) return 0; 
+            var staringPointX = window.innerWidth / 2, staringPointY = window.innerHeight / 2; 
+            var distances = x50.map((x, i) => Math.sqrt(Math.pow(x - staringPointX, 2) + Math.pow(y50[i] - staringPointY, 2))); 
+            var maxDistance = window.innerHeight / 2; 
+            var percentages = distances.map(d => Math.max(0, 100 - (d / maxDistance * 100))); 
+            var avgPrecision = percentages.reduce((a, b) => a + b, 0) / percentages.length; 
+            return Math.round(avgPrecision); 
+        }
         
         // ===========================================
         // 页面启动
