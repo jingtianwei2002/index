@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>眼动追踪数据收集系统</title>
+    <title>眼动追踪数据收集系统 - 修复版</title>
     
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
@@ -19,7 +19,7 @@
             messagingSenderId: "718279245978",
             appId: "1:718279245978:web:93a9a07473ad8d3e6a5f23"
         };
-            
+        
         // 初始化 Firebase
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
@@ -27,21 +27,6 @@
         // 生成唯一会话ID
         const sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
         console.log('会话ID:', sessionId);
-
-        // 第三方Cookie警告
-        window.addEventListener('DOMContentLoaded', function() {
-            if (navigator.cookieEnabled && !document.cookie.includes('webgazer_cookie_consent')) {
-                const cookieWarning = document.createElement('div');
-                cookieWarning.style.cssText = 'position:fixed;top:0;left:0;width:100%;background:#ff9800;color:white;padding:12px;text-align:center;z-index:10000;font-weight:bold;';
-                cookieWarning.innerHTML = '⚠️ 注意：WebGazer需要启用第三方Cookie才能正常工作。请确保您的浏览器设置允许第三方Cookie，或使用Chrome浏览器获得最佳体验。<button style="margin-left:15px;padding:5px 10px;background:white;border:none;border-radius:4px;cursor:pointer;">我知道了</button>';
-                document.body.appendChild(cookieWarning);
-                
-                cookieWarning.querySelector('button').onclick = function() {
-                    document.cookie = "webgazer_cookie_consent=true;max-age=31536000;path=/";
-                    cookieWarning.style.display = 'none';
-                };
-            }
-        });
 
         // 动态加载WebGazer
         async function loadWebGazerScript() {
@@ -80,7 +65,6 @@
             background: #f0f0f0;
         }
         
-        /* 隐藏热力图容器 - 不在页面显示 */
         #heatmapContainer { 
             position: fixed; 
             top: 0; 
@@ -88,9 +72,9 @@
             width: 100%; 
             height: 100%; 
             pointer-events: none; 
-            z-index: -1000; /* 隐藏到后台 */
-            opacity: 0; /* 完全透明 */
-            display: none; /* 不显示 */
+            z-index: -1000;
+            opacity: 0;
+            display: none;
         }
         
         #plotting_canvas {
@@ -114,7 +98,6 @@
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
         
-        /* 简化的统计面板 - 移除云端信息 */
         #statsPanel {
             position: fixed;
             top: 20px;
@@ -124,7 +107,7 @@
             padding: 20px;
             border-radius: 10px;
             z-index: 2000;
-            min-width: 250px;
+            min-width: 300px;
             font-size: 14px;
         }
         
@@ -148,10 +131,10 @@
             padding: 15px;
             border-radius: 8px;
             z-index: 2000;
-            max-width: 300px;
+            max-width: 350px;
             font-family: monospace;
             font-size: 12px;
-            max-height: 200px;
+            max-height: 300px;
             overflow-y: auto;
         }
         
@@ -195,6 +178,8 @@
         .btn.danger { background: #f44336; }
         .btn.danger:hover { background: #da190b; }
         .btn:disabled { background: #ccc; cursor: not-allowed; }
+        .btn.test { background: #2196F3; }
+        .btn.test:hover { background: #1976D2; }
         
         .status {
             position: fixed;
@@ -239,10 +224,6 @@
             border: 2px solid #4CAF50 !important;
         }
         
-        #webgazerFaceFeedbackBox {
-            border: 2px solid #4CAF50 !important;
-        }
-        
         .Calibration {
             width: 20px;
             height: 20px;
@@ -275,14 +256,22 @@
             border-radius: 5px;
         }
 
-        /* 数据收集状态指示器 */
         .collection-status {
             margin-top: 15px;
             padding: 10px;
             border-radius: 5px;
             text-align: center;
-            background: #2196F3;
-            color: white;
+        }
+        .collection-status.connected { background: #4CAF50; color: white; }
+        .collection-status.disconnected { background: #f44336; color: white; }
+        .collection-status.uploading { background: #ff9800; color: white; }
+
+        .firebase-status {
+            margin-top: 10px;
+            padding: 8px;
+            border-radius: 4px;
+            text-align: center;
+            font-size: 12px;
         }
     </style>
 </head>
@@ -291,9 +280,12 @@
     <div id="status" class="status loading">正在加载库文件...</div>
     <canvas id="plotting_canvas" width="500" height="500"></canvas>
 
-    <!-- 简化的统计面板 - 移除云端相关信息 -->
     <div id="statsPanel">
         <h3 style="margin-top: 0; color: #4CAF50;">📊 眼动数据统计</h3>
+        <div class="stat-item">
+            <span>会话ID:</span>
+            <span id="sessionIdDisplay" class="stat-value" style="font-size: 10px;"></span>
+        </div>
         <div class="stat-item">
             <span>注视点总数:</span>
             <span id="totalGazes" class="stat-value">0</span>
@@ -303,8 +295,8 @@
             <span id="saccadeCount" class="stat-value">0</span>
         </div>
         <div class="stat-item">
-            <span>平均注视时长:</span>
-            <span id="avgDuration" class="stat-value">0ms</span>
+            <span>数据快照数:</span>
+            <span id="snapshotCount" class="stat-value">0</span>
         </div>
         <div class="stat-item">
             <span>运行时间:</span>
@@ -315,16 +307,26 @@
             <span>系统状态:</span>
             <span id="systemStatus" class="stat-value">加载中</span>
         </div>
-        <div class="collection-status" id="collectionStatus">
+        <div class="collection-status disconnected" id="collectionStatus">
             📈 数据收集: 未开始
         </div>
+        <div class="firebase-status disconnected" id="firebaseStatus">
+            🔥 Firebase: 未连接
+        </div>
+        
+        <!-- 添加测试按钮 -->
+        <button class="btn test" onclick="testFirebaseConnection()" style="width: 100%; margin-top: 10px;">
+            🧪 测试Firebase连接
+        </button>
+        <button class="btn test" onclick="forceSaveData()" style="width: 100%; margin-top: 5px;">
+            💾 强制保存测试数据
+        </button>
     </div>
 
     <div id="debugPanel">
         <div id="debugInfo">调试信息将在这里显示...</div>
     </div>
 
-    <!-- 隐藏的热力图容器 - 用于后台生成热力图数据 -->
     <div id="heatmapContainer"></div>
 
     <div class="calibrationDiv">
@@ -340,7 +342,7 @@
     </div>
 
     <div id="content">
-        <h1 style="text-align: center; color: #333;">👁️ 眼动追踪数据收集系统</h1>
+        <h1 style="text-align: center; color: #333;">👁️ 眼动追踪数据收集系统 - 修复版</h1>
         
         <div class="controls">
             <button class="btn" id="startBtn" onclick="startEyeTracking()">🚀 启动眼动追踪</button>
@@ -351,14 +353,28 @@
             <button class="btn danger" onclick="stopTracking()">⏹️ 停止追踪</button>
         </div>
         
+        <div style="background: #e3f2fd; padding: 15px; border-radius: 8px; margin: 20px 0;">
+            <h4 style="margin-top: 0; color: #1565c0;">🔧 诊断信息：</h4>
+            <p><strong>当前时间：</strong> 2025-08-09 14:07:27 (UTC)</p>
+            <p><strong>用户：</strong> jingtianwei2002</p>
+            <p><strong>修复版本特点：</strong></p>
+            <ul>
+                <li>✅ 增强的错误日志记录</li>
+                <li>✅ 实时Firebase连接状态显示</li>
+                <li>✅ 手动测试按钮</li>
+                <li>✅ 强制数据保存功能</li>
+                <li>✅ 详细的调试信息</li>
+            </ul>
+        </div>
+        
         <p style="text-align: center; font-size: 18px; color: #666;">
             👀 请自然地浏览下面的内容，系统会自动收集您的眼动数据<br>
-            📊 数据每秒自动保存到云端数据库
+            📊 数据每秒自动保存到云端数据库（右侧可查看状态）
         </p>
         
         <div class="test-area area-blue">
             <h2>🌊 区域 A - 海洋蓝</h2>
-            <p>这是第一个测试区域。请尝试注视这里几秒钟，系统会记录您的注视点、注视时间和眼动模式。所有数据会自动保存到云端。</p>
+            <p>这是第一个测试区域。请尝试注视这里几秒钟，系统会记录您的注视点、注视时间和眼动模式。右侧面板会显示实时状态。</p>
         </div>
         
         <div class="test-area area-green">
@@ -368,28 +384,7 @@
         
         <div class="test-area area-orange">
             <h2>🔥 区域 C - 夕阳橙</h2>
-            <p>这是第三个测试区域。系统会分析您的眼动轨迹，生成详细的注视点数据和热力图，每秒自动保存一次。</p>
-        </div>
-        
-        <div style="background: white; padding: 20px; border-radius: 10px; margin-top: 30px; border-left: 4px solid #4CAF50;">
-            <h3>📋 系统说明（数据收集版）：</h3>
-            <ol>
-                <li><strong>点击"启动眼动追踪"</strong> - 启动系统并允许摄像头权限</li>
-                <li><strong>完成校准</strong> - 点击"开始校准"并依次点击9个校准点</li>
-                <li><strong>自然浏览页面</strong> - 校准完成后正常浏览即可</li>
-                <li><strong>自动数据收集</strong> - 系统每秒自动收集并保存以下数据：
-                    <ul>
-                        <li>📍 注视点坐标和时间</li>
-                        <li>👁️ 眼跳检测和频率</li>
-                        <li>⏱️ 注视时长统计</li>
-                        <li>🔥 热力图数据快照</li>
-                    </ul>
-                </li>
-                <li><strong>数据存储</strong> - 所有数据自动保存到Firebase云端数据库</li>
-            </ol>
-            <p style="color: #2196F3; margin-top: 15px;"><strong>特点：</strong> 
-                本系统专注于数据收集，热力图在后台生成但不在页面显示，确保不影响用户的自然浏览行为！
-            </p>
+            <p>这是第三个测试区域。系统会分析您的眼动轨迹，生成详细的注视点数据和热力图，每秒自动保存一次到Firebase。</p>
         </div>
     </div>
 
@@ -400,6 +395,7 @@
         let heatmapInstance = null;
         let gazeCount = 0;
         let saccadeCount = 0;
+        let snapshotCount = 0;
         let totalDuration = 0;
         let startTime = Date.now();
         let isTracking = false;
@@ -409,6 +405,7 @@
         let initializationAttempts = 0;
         let librariesLoaded = false;
         let lastGazeTime = 0;
+        let firebaseConnected = false;
         
         // 校准相关变量
         var PointCalibrate = 0;
@@ -422,18 +419,148 @@
         let gazeData = [];
         let saccadeData = [];
         let fixationData = [];
-        let heatmapSnapshots = [];
         let sessionStartTime = new Date().toISOString();
         let lastGazePoint = null;
         let currentFixation = null;
         let autoSaveInterval = null;
 
         // 眼跳检测参数
-        const SACCADE_THRESHOLD = 100; // 像素距离阈值
-        const FIXATION_MIN_DURATION = 100; // 最小注视时长(ms)
+        const SACCADE_THRESHOLD = 100;
+        const FIXATION_MIN_DURATION = 100;
+
+        // 显示会话ID
+        document.getElementById('sessionIdDisplay').textContent = sessionId.substring(0, 15) + '...';
 
         // ===========================================
-        // 自动数据保存功能 - 每秒保存一次
+        // Firebase 连接测试和状态管理
+        // ===========================================
+        
+        /**
+         * 测试Firebase连接
+         */
+        async function testFirebaseConnection() {
+            debug('开始测试Firebase连接...');
+            updateFirebaseStatus('测试中...', 'uploading');
+            
+            try {
+                // 测试写入
+                const testDoc = await db.collection("connection_test").add({
+                    test: true,
+                    timestamp: new Date().toISOString(),
+                    user: 'jingtianwei2002',
+                    sessionId: sessionId
+                });
+                
+                debug(`Firebase连接测试成功！文档ID: ${testDoc.id}`);
+                updateFirebaseStatus('连接正常', 'connected');
+                firebaseConnected = true;
+                
+                // 测试读取
+                const readTest = await db.collection("connection_test").doc(testDoc.id).get();
+                if (readTest.exists) {
+                    debug('Firebase读取测试也成功！');
+                    alert('🎉 Firebase连接测试成功！\n\n✅ 写入测试通过\n✅ 读取测试通过\n\n现在可以正常收集数据了！');
+                } else {
+                    throw new Error('读取测试失败');
+                }
+                
+                return true;
+            } catch (error) {
+                debug(`Firebase连接测试失败: ${error.message}`);
+                updateFirebaseStatus('连接失败', 'disconnected');
+                firebaseConnected = false;
+                
+                let errorMsg = '❌ Firebase连接测试失败！\n\n';
+                if (error.code === 'permission-denied') {
+                    errorMsg += '🔒 权限被拒绝 - 请检查Firestore安全规则\n\n';
+                    errorMsg += '建议设置规则：\n';
+                    errorMsg += 'allow read, write: if request.time < timestamp.date(2026, 12, 31);';
+                } else if (error.code === 'unavailable') {
+                    errorMsg += '🌐 网络连接问题 - 请检查网络连接';
+                } else {
+                    errorMsg += `详细错误: ${error.message}`;
+                }
+                
+                alert(errorMsg);
+                console.error('Firebase测试完整错误:', error);
+                return false;
+            }
+        }
+
+        /**
+         * 更新Firebase状态显示
+         */
+        function updateFirebaseStatus(message, status) {
+            const statusElement = document.getElementById('firebaseStatus');
+            statusElement.textContent = `🔥 Firebase: ${message}`;
+            statusElement.className = `firebase-status ${status}`;
+        }
+
+        /**
+         * 强制保存测试数据
+         */
+        async function forceSaveData() {
+            if (!firebaseConnected) {
+                alert('❌ 请先测试Firebase连接！');
+                return;
+            }
+            
+            debug('强制保存测试数据...');
+            
+            try {
+                const testData = {
+                    sessionId: sessionId,
+                    timestamp: new Date().toISOString(),
+                    dataType: 'manual_test',
+                    snapshot: {
+                        gazePoints: gazeData.length > 0 ? gazeData : [
+                            { x: 100, y: 100, timestamp: new Date().toISOString(), duration: 50 },
+                            { x: 200, y: 150, timestamp: new Date().toISOString(), duration: 75 }
+                        ],
+                        saccades: saccadeData.length > 0 ? saccadeData : [
+                            { fromX: 100, fromY: 100, toX: 200, toY: 150, distance: 125, duration: 25, timestamp: new Date().toISOString() }
+                        ],
+                        fixations: fixationData.length > 0 ? fixationData : [
+                            { x: 150, y: 125, duration: 500, startTime: new Date().toISOString(), endTime: new Date().toISOString(), pointCount: 5 }
+                        ],
+                        heatmapData: {
+                            dataPoints: [{ x: 150, y: 125, value: 50 }],
+                            maxValue: 100,
+                            timestamp: new Date().toISOString()
+                        },
+                        statistics: {
+                            totalGazePoints: gazeCount || 2,
+                            totalSaccades: saccadeCount || 1,
+                            averageFixationDuration: 500,
+                            runningTime: Math.round((Date.now() - startTime) / 1000)
+                        }
+                    },
+                    deviceInfo: {
+                        windowWidth: window.innerWidth,
+                        windowHeight: window.innerHeight,
+                        userAgent: navigator.userAgent,
+                        user: 'jingtianwei2002'
+                    },
+                    testNote: '手动保存的测试数据'
+                };
+
+                const docRef = await db.collection("eye_tracking_snapshots").add(testData);
+                
+                snapshotCount++;
+                document.getElementById('snapshotCount').textContent = snapshotCount;
+                
+                debug(`测试数据保存成功！文档ID: ${docRef.id}`);
+                alert(`✅ 测试数据保存成功！\n\n📄 文档ID: ${docRef.id}\n🔢 快照编号: ${snapshotCount}\n\n请到Firebase控制台查看数据！`);
+                
+            } catch (error) {
+                debug(`测试数据保存失败: ${error.message}`);
+                alert(`❌ 测试数据保存失败！\n\n${error.message}`);
+                console.error('保存错误详情:', error);
+            }
+        }
+
+        // ===========================================
+        // 改进的自动数据保存功能
         // ===========================================
         
         /**
@@ -445,12 +572,12 @@
             }
             
             autoSaveInterval = setInterval(async () => {
-                if (isTracking && gazeData.length > 0) {
+                if (isTracking && firebaseConnected) {
                     await saveDataSnapshot();
                 }
-            }, 1000); // 每秒保存一次
+            }, 1000);
             
-            document.getElementById('collectionStatus').textContent = '📈 数据收集: 进行中 (每秒自动保存)';
+            updateCollectionStatus('进行中 (每秒自动保存)', 'connected');
             debug('自动保存已启动，每秒保存一次数据');
         }
 
@@ -462,53 +589,82 @@
                 clearInterval(autoSaveInterval);
                 autoSaveInterval = null;
             }
-            document.getElementById('collectionStatus').textContent = '📈 数据收集: 已停止';
+            updateCollectionStatus('已停止', 'disconnected');
             debug('自动保存已停止');
         }
 
         /**
-         * 保存数据快照到Firebase
+         * 更新数据收集状态
+         */
+        function updateCollectionStatus(message, status) {
+            const statusElement = document.getElementById('collectionStatus');
+            statusElement.textContent = `📈 数据收集: ${message}`;
+            statusElement.className = `collection-status ${status}`;
+        }
+
+        /**
+         * 改进的数据快照保存
          */
         async function saveDataSnapshot() {
+            if (!firebaseConnected) {
+                debug('Firebase未连接，跳过数据保存');
+                return;
+            }
+            
             try {
-                // 生成热力图快照
-                const heatmapSnapshot = generateHeatmapSnapshot();
+                updateCollectionStatus('保存中...', 'uploading');
                 
-                // 准备保存的数据
+                // 即使没有新数据也保存状态信息
                 const snapshotData = {
                     sessionId: sessionId,
                     timestamp: new Date().toISOString(),
                     snapshot: {
-                        gazePoints: [...gazeData], // 所有注视点
-                        saccades: [...saccadeData], // 眼跳数据
-                        fixations: [...fixationData], // 注视数据
-                        heatmapData: heatmapSnapshot, // 热力图快照
+                        gazePoints: [...gazeData],
+                        saccades: [...saccadeData],
+                        fixations: [...fixationData],
+                        heatmapData: generateHeatmapSnapshot(),
                         statistics: {
                             totalGazePoints: gazeCount,
                             totalSaccades: saccadeCount,
                             averageFixationDuration: calculateAverageFixationDuration(),
-                            runningTime: Math.round((Date.now() - startTime) / 1000)
+                            runningTime: Math.round((Date.now() - startTime) / 1000),
+                            snapshotNumber: snapshotCount + 1
                         }
                     },
                     deviceInfo: {
                         windowWidth: window.innerWidth,
                         windowHeight: window.innerHeight,
-                        userAgent: navigator.userAgent
+                        userAgent: navigator.userAgent,
+                        user: 'jingtianwei2002'
+                    },
+                    calibrationInfo: {
+                        calibrationCompleted: PointCalibrate >= 9,
+                        accuracy: document.getElementById("Accuracy").textContent
                     }
                 };
 
-                // 保存到Firebase
-                await db.collection("eye_tracking_snapshots").add(snapshotData);
+                const docRef = await db.collection("eye_tracking_snapshots").add(snapshotData);
                 
-                debug(`数据快照已保存: ${gazeData.length} 注视点, ${saccadeData.length} 眼跳, ${fixationData.length} 注视`);
+                snapshotCount++;
+                document.getElementById('snapshotCount').textContent = snapshotCount;
                 
-                // 清空本地数据缓存，为下一秒做准备
+                debug(`数据快照 #${snapshotCount} 已保存: ${gazeData.length} 注视点, 文档ID: ${docRef.id.substring(0, 8)}...`);
+                
+                // 清空本地缓存
                 gazeData = [];
                 saccadeData = [];
                 
+                updateCollectionStatus('进行中 (每秒自动保存)', 'connected');
+                
             } catch (error) {
                 debug(`数据保存失败: ${error.message}`);
+                updateCollectionStatus('保存失败', 'disconnected');
                 console.error('保存错误:', error);
+                
+                // 如果是权限错误，提示用户
+                if (error.code === 'permission-denied') {
+                    alert('⚠️ 数据保存权限被拒绝！\n\n请检查Firestore安全规则是否正确设置。');
+                }
             }
         }
 
@@ -516,11 +672,14 @@
          * 生成热力图快照数据
          */
         function generateHeatmapSnapshot() {
-            if (!heatmapInstance) {
-                return null;
+            if (!heatmapInstance || !heatmapInstance._store) {
+                return {
+                    dataPoints: [],
+                    maxValue: 0,
+                    timestamp: new Date().toISOString()
+                };
             }
 
-            // 获取当前热力图的数据点
             const heatmapData = heatmapInstance._store._data || [];
             
             return {
@@ -544,12 +703,9 @@
         }
 
         // ===========================================
-        // 眼跳和注视检测
+        // 其余函数保持不变，但添加更多调试信息
         // ===========================================
         
-        /**
-         * 检测眼跳
-         */
         function detectSaccade(currentPoint, previousPoint) {
             if (!previousPoint || !currentPoint) return false;
             
@@ -561,14 +717,10 @@
             return distance > SACCADE_THRESHOLD;
         }
 
-        /**
-         * 处理注视点
-         */
         function processFixation(gazePoint) {
             const currentTime = Date.now();
             
             if (!currentFixation) {
-                // 开始新的注视
                 currentFixation = {
                     startTime: currentTime,
                     x: gazePoint.x,
@@ -576,22 +728,18 @@
                     points: [gazePoint]
                 };
             } else {
-                // 检查是否还在同一注视区域内
                 const distance = Math.sqrt(
                     Math.pow(gazePoint.x - currentFixation.x, 2) + 
                     Math.pow(gazePoint.y - currentFixation.y, 2)
                 );
                 
                 if (distance < SACCADE_THRESHOLD) {
-                    // 继续当前注视
                     currentFixation.points.push(gazePoint);
-                    // 更新注视中心点（平均位置）
                     const avgX = currentFixation.points.reduce((sum, p) => sum + p.x, 0) / currentFixation.points.length;
                     const avgY = currentFixation.points.reduce((sum, p) => sum + p.y, 0) / currentFixation.points.length;
                     currentFixation.x = avgX;
                     currentFixation.y = avgY;
                 } else {
-                    // 结束当前注视，开始新注视
                     const duration = currentTime - currentFixation.startTime;
                     if (duration >= FIXATION_MIN_DURATION) {
                         fixationData.push({
@@ -604,7 +752,6 @@
                         });
                     }
                     
-                    // 开始新注视
                     currentFixation = {
                         startTime: currentTime,
                         x: gazePoint.x,
@@ -615,10 +762,7 @@
             }
         }
 
-        // ===========================================
-        // 精度计算函数 (保持不变)
-        // ===========================================
-
+        // 精度计算函数保持不变
         function store_points_variable() {
             isStoring = true;
             storedPoints = {x: [], y: []};
@@ -637,10 +781,8 @@
         function calculatePrecision(past50Array) {
             var windowHeight = window.innerHeight;
             var windowWidth = window.innerWidth;
-
             var x50 = past50Array[0];
             var y50 = past50Array[1];
-
             var staringPointX = windowWidth / 2;
             var staringPointY = windowHeight / 2;
 
@@ -660,7 +802,6 @@
                 var xDiff = staringPointX - x50[x];
                 var yDiff = staringPointY - y50[x];
                 var distance = Math.sqrt((xDiff * xDiff) + (yDiff * yDiff));
-
                 var halfWindowHeight = windowHeight / 2;
                 var precision = 0;
                 if (distance <= halfWindowHeight && distance > -1) {
@@ -670,7 +811,6 @@
                 } else if (distance > -1) {
                     precision = 100;
                 }
-
                 precisionPercentages[x] = precision;
             }
         }
@@ -684,10 +824,7 @@
             return precision;
         }
 
-        // ===========================================
-        // 校准函数 (保持不变)
-        // ===========================================
-        
+        // 校准函数保持不变
         function ClearCanvas(){
             document.querySelectorAll('.Calibration').forEach((i) => {
                 i.style.setProperty('display', 'none');
@@ -712,7 +849,6 @@
 
         function calPointClick(node) {
             const id = node.id;
-
             if (!CalibrationPoints[id]){ 
                 CalibrationPoints[id]=0;
             }
@@ -739,10 +875,8 @@
                     i.style.setProperty('display', 'none');
                 });
                 document.getElementById('Pt5').style.removeProperty('display');
-
                 var canvas = document.getElementById("plotting_canvas");
                 canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
-
                 calcAccuracy();
             }
         }
@@ -758,13 +892,11 @@
             if (typeof webgazer !== 'undefined' && webgazer.clearData) {
                 webgazer.clearData();
             }
-
             document.querySelectorAll('.Calibration').forEach((i) => {
                 i.style.setProperty('background-color', 'red');
                 i.style.setProperty('opacity', '0.2');
                 i.removeAttribute('disabled');
             });
-
             CalibrationPoints = {};
             PointCalibrate = 0;
         }
@@ -789,7 +921,6 @@
                 closeModal: true
             }).then( () => {
                 debug('开始5秒精度测量，请凝视屏幕中心');
-                
                 store_points_variable();
                 
                 sleep(5000).then(() => {
@@ -819,7 +950,11 @@
                             ClearCanvas();
                             updateStatus('校准完成 - 开始数据收集', 'ready');
                             // 校准完成后启动自动保存
-                            startAutoSave();
+                            if (firebaseConnected) {
+                                startAutoSave();
+                            } else {
+                                alert('⚠️ Firebase未连接，请先测试连接后再开始数据收集！');
+                            }
                         } else {
                             document.getElementById("Accuracy").innerHTML = "等待校准...";
                             webgazer.clearData();
@@ -832,9 +967,7 @@
             });
         }
 
-        // ===========================================
-        // 库加载检查 (保持不变)
-        // ===========================================
+        // 库加载检查
         async function checkLibrariesLoaded() {
             updateStatus('检查库文件...', 'loading');
             updateLoadingProgress(25);
@@ -867,22 +1000,17 @@
                         throw new Error('所有WebGazer源都加载失败');
                     }
                 } catch (error) {
-                    updateStatus('WebGazer库加载失败 - 请检查网络连接', 'error');
+                    updateStatus('WebGazer库加载失败', 'error');
                     document.getElementById('systemStatus').textContent = 'WebGazer缺失';
                     debug(`WebGazer加载错误: ${error.message}`);
-                    
-                    setTimeout(() => {
-                        alert('WebGazer库加载失败!\n\n建议方案:\n1. 请检查网络连接\n2. 请访问 https://webgazer.cs.brown.edu/ 下载webgazer.js文件\n3. 将下载的文件放在同一文件夹中\n4. 刷新页面重试');
-                    }, 500);
                     return false;
                 }
             }
             
-            if (typeof webgazer === 'undefined' || typeof h337 === 'undefined') {
-                updateStatus('库加载异常', 'error');
-                document.getElementById('systemStatus').textContent = '加载失败';
-                return false;
-            }
+            updateLoadingProgress(75);
+            
+            // 测试Firebase连接
+            setTimeout(testFirebaseConnection, 1000);
             
             updateLoadingProgress(100);
             document.getElementById('systemStatus').textContent = '已加载';
@@ -895,9 +1023,7 @@
             return true;
         }
 
-        // ===========================================
-        // 热力图初始化 - 隐藏显示
-        // ===========================================
+        // 热力图初始化
         function setupHeatmap() {
             debug('初始化后台热力图...');
             
@@ -917,7 +1043,7 @@
                     }
                 });
                 
-                debug('后台热力图初始化完成（不显示在页面）');
+                debug('后台热力图初始化完成');
                 return true;
             } catch (error) {
                 debug(`热力图初始化失败: ${error.message}`);
@@ -925,9 +1051,7 @@
             }
         }
 
-        // ===========================================
-        // 眼动数据监听器 - 增强版数据收集
-        // ===========================================
+        // 眼动数据监听器
         function gazeDataCallback(data, elapsedTime) {
             rawGazeCount++;
             
@@ -935,7 +1059,6 @@
                 return;
             }
 
-            // 精度测量时存储预测点
             if (isStoring && data.x && data.y) {
                 storedPoints.x.push(data.x);
                 storedPoints.y.push(data.y);
@@ -992,17 +1115,15 @@
                 totalDuration += timeDiff;
                 lastGazePoint = gazePoint;
                 
-                if (gazeCount % 30 === 0) {
-                    debug(`数据收集: ${gazeCount} 注视点, ${saccadeCount} 眼跳, ${fixationData.length} 注视`);
+                if (gazeCount % 100 === 0) {
+                    debug(`数据收集进度: ${gazeCount} 注视点, ${saccadeCount} 眼跳, ${fixationData.length} 注视`);
                 }
             }
             
             lastGazeTime = currentTime;
         }
 
-        // ===========================================
-        // WebGazer 初始化 (保持不变)
-        // ===========================================
+        // WebGazer 初始化
         async function startEyeTracking() {
             if (!librariesLoaded) {
                 alert('库文件还未加载完成，请等待加载完成后再试！');
@@ -1049,7 +1170,13 @@
                 
                 setTimeout(() => {
                     if (PointCalibrate === 0) {
-                        alert('系统已成功启动！\n\n请点击"开始校准"按钮进行9点校准。\n\n校准完成后将自动开始数据收集，所有眼动数据每秒自动保存到云端。');
+                        let message = '🎉 系统已成功启动！\n\n';
+                        message += '📋 下一步操作：\n';
+                        message += '1. 点击"测试Firebase连接"确保数据可以保存\n';
+                        message += '2. 点击"开始校准"进行9点校准\n';
+                        message += '3. 校准完成后自动开始数据收集\n\n';
+                        message += '💡 提示：右侧面板会显示实时状态信息';
+                        alert(message);
                     }
                 }, 2000);
                 
@@ -1075,15 +1202,10 @@
             document.getElementById('startBtn').textContent = '🔄 重试启动';
         }
 
-        // ===========================================
         // 统计信息更新
-        // ===========================================
         function updateStats() {
             document.getElementById('totalGazes').textContent = gazeCount;
             document.getElementById('saccadeCount').textContent = saccadeCount;
-            
-            let avgDuration = fixationData.length > 0 ? calculateAverageFixationDuration() : 0;
-            document.getElementById('avgDuration').textContent = avgDuration + 'ms';
             
             let elapsedSeconds = (Date.now() - startTime) / 1000;
             document.getElementById('runningTime').textContent = Math.round(elapsedSeconds) + '秒';
@@ -1096,11 +1218,11 @@
             debug(`状态更新: ${message}`);
         }
 
-        // ===========================================
-        // 页面初始化 (保持不变)
-        // ===========================================
+        // 页面初始化
         window.addEventListener('DOMContentLoaded', async function() {
-            debug('页面加载完成，检查库文件...');
+            debug('页面加载完成，开始系统初始化...');
+            debug('当前时间: 2025-08-09 14:07:27 (UTC)');
+            debug('当前用户: jingtianwei2002');
             
             try {
                 const loaded = await checkLibrariesLoaded();
@@ -1126,19 +1248,17 @@
             }
         });
 
-        // ===========================================
         // 调试和工具函数
-        // ===========================================
         function debug(message) {
             if (debugMode) {
-                console.log(message);
+                console.log(`[${new Date().toLocaleTimeString()}] ${message}`);
                 const debugDiv = document.getElementById('debugInfo');
                 const timestamp = new Date().toLocaleTimeString();
                 debugDiv.innerHTML = `[${timestamp}] ${message}<br>` + debugDiv.innerHTML;
                 
                 const lines = debugDiv.innerHTML.split('<br>');
-                if (lines.length > 15) {
-                    debugDiv.innerHTML = lines.slice(0, 15).join('<br>');
+                if (lines.length > 20) {
+                    debugDiv.innerHTML = lines.slice(0, 20).join('<br>');
                 }
             }
         }
@@ -1159,16 +1279,19 @@
         function exportData() {
             const stats = {
                 sessionId: sessionId,
+                exportTime: new Date().toISOString(),
+                user: 'jingtianwei2002',
                 totalGazePoints: gazeCount,
                 totalSaccades: saccadeCount,
                 totalFixations: fixationData.length,
+                totalSnapshots: snapshotCount,
                 averageFixationDuration: calculateAverageFixationDuration(),
                 runningTime: Math.round((Date.now() - startTime) / 1000),
                 calibrationPoints: PointCalibrate,
                 systemReady: webgazerReady,
+                firebaseConnected: firebaseConnected,
                 accuracyMeasurement: document.getElementById("Accuracy").innerHTML,
                 sessionStartTime: sessionStartTime,
-                timestamp: new Date().toLocaleString('zh-CN'),
                 recentGazeData: gazeData,
                 recentSaccadeData: saccadeData,
                 allFixationData: fixationData
@@ -1184,8 +1307,8 @@
             link.click();
             
             URL.revokeObjectURL(url);
-            debug(`本地数据已导出: ${gazeData.length} 注视点, ${saccadeData.length} 眼跳, ${fixationData.length} 注视`);
-            alert(`本地数据导出成功！\n\n包含:\n- ${gazeData.length} 个最近注视点\n- ${saccadeData.length} 个最近眼跳\n- ${fixationData.length} 个总注视记录\n\n注：云端数据每秒自动保存`);
+            debug(`本地数据已导出`);
+            alert(`📊 本地数据导出成功！\n\n包含:\n- ${gazeData.length} 个最近注视点\n- ${saccadeData.length} 个最近眼跳\n- ${fixationData.length} 个总注视记录\n- ${snapshotCount} 个云端快照记录`);
         }
 
         function stopTracking() {
@@ -1193,7 +1316,6 @@
             webgazerReady = false;
             isStoring = false;
             
-            // 停止自动保存
             stopAutoSave();
             
             try {
@@ -1214,12 +1336,10 @@
             ClearCalibration();
             ClearCanvas();
             
-            debug('眼动追踪已停止，数据收集已停止');
+            debug('眼动追踪已停止');
         }
 
-        // ===========================================
         // 页面卸载时清理资源
-        // ===========================================
         window.onbeforeunload = function() {
             stopAutoSave();
             if (typeof webgazer !== 'undefined') {
@@ -1230,9 +1350,7 @@
 
         setInterval(updateStats, 1000);
 
-        // ===========================================
         // 错误处理
-        // ===========================================
         window.addEventListener('error', function(event) {
             debug(`全局错误: ${event.error?.message || event.message}`);
             console.error('页面错误:', event);
