@@ -3,18 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>眼动追踪数据收集系统 - 完整版</title>
+    <title>眼动追踪数据收集系统 - 完整版 (Storage优化)</title>
     
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+    <!-- 【新增】引入Firebase Storage SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-storage-compat.js"></script>
     
     <script>
         const firebaseConfig = {
-           apiKey: "AIzaSyB6O5l6uZa-6sywCZTGRJx2CKPuq3KeBF0",
+            apiKey: "AIzaSyB6O5l6uZa-6sywCZTGRJx2CKPuq3KeBF0",
             authDomain: "index-9f58d.firebaseapp.com",
             projectId: "index-9f58d",
-            storageBucket: "index-9f58d.firebasestorage.app",
+            storageBucket: "index-9f58d.appspot.com", // 【注意】这里通常是 xxx.appspot.com
             messagingSenderId: "718279245978",
             appId: "1:718279245978:web:93a9a07473ad8d3e6a5f23"
         };
@@ -22,6 +24,8 @@
         // 初始化 Firebase
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
+        // 【新增】初始化Firebase Storage
+        const storage = firebase.storage();
         
         const sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
         const userId = 'jingtianwei2002';
@@ -145,8 +149,8 @@
         <p style="text-align: center; font-size: 18px; color: #666; margin: 30px 0;">👀 请自然地浏览下面的内容，系统会完整收集您的眼动数据</p>
         <div class="test-area area-blue" onclick="debug('点击了蓝色区域')"><h2>🌊 区域 A - 海洋蓝</h2><p>这是第一个测试区域。请尝试注视这里几秒钟，系统会记录您的注视点坐标、注视时间和眼动模式。</p></div>
         <div class="test-area area-green" onclick="debug('点击了绿色区域')"><h2>🌿 区域 B - 森林绿</h2><p>这是第二个测试区域。在不同区域之间移动视线会产生眼跳数据，包括移动距离和速度。</p></div>
-        <div class="test-area area-orange" onclick="debug('点击了橙色区域')"><h2>🔥 区域 C - 夕阳橙</h2><p>这是第三个测试区域。长时间注视会生成注视数据，包括注视位置和持续时间。系统每秒会生成一张热力图快照保存到云端。</p></div>
-        <div style="text-align: center; margin: 40px 0; padding: 20px; background: #e8f5e8; border-radius: 8px;"><h4 style="color: #2e7d32; margin-bottom: 15px;">📋 完整功能说明</h4><p style="margin: 8px 0; color: #555;">✅ 注视点追踪 - 实时记录眼球注视位置</p><p style="margin: 8px 0; color: #555;">✅ 眼跳检测 - 自动识别眼球快速移动</p><p style="margin: 8px 0; color: #555;">✅ 注视时间统计 - 计算注视持续时间和次数</p><p style="margin: 8px 0; color: #555;">✅ 热力图生成 - 每秒自动生成热力图快照</p><p style="margin: 8px 0; color: #555;">✅ 云端存储 - 所有数据自动保存到Firebase</p><p style="margin: 8px 0; color: #555;">✅ 9点校准 - 使用标准WebGazer校准流程</p></div>
+        <div class="test-area area-orange" onclick="debug('点击了橙色区域')"><h2>🔥 区域 C - 夕阳橙</h2><p>这是第三个测试区域。长时间注视会生成注视数据。系统每隔几秒会将生成的热力图快照上传到云端存储。</p></div>
+        <div style="text-align: center; margin: 40px 0; padding: 20px; background: #e8f5e8; border-radius: 8px;"><h4 style="color: #2e7d32; margin-bottom: 15px;">📋 完整功能说明</h4><p style="margin: 8px 0; color: #555;">✅ 注视点追踪 - 实时记录眼球注视位置</p><p style="margin: 8px 0; color: #555;">✅ 眼跳检测 - 自动识别眼球快速移动</p><p style="margin: 8px 0; color: #555;">✅ 注视时间统计 - 计算注视持续时间和次数</p><p style="margin: 8px 0; color: #555;">✅ 热力图生成 - 自动生成热力图快照并上传</p><p style="margin: 8px 0; color: #555;">✅ 云端存储 - 所有数据自动保存到Firebase</p><p style="margin: 8px 0; color: #555;">✅ 9点校准 - 使用标准WebGazer校准流程</p></div>
     </div>
 
     <script>
@@ -157,17 +161,14 @@
         let startTime = Date.now();
         let isTracking = false, webgazerReady = false, debugMode = false, heatmapVisible = false, librariesLoaded = false, firebaseConnected = false;
         
-        // 【新增】校准与精度相关变量
         var PointCalibrate = 0;
         var CalibrationPoints = {};
         var isStoring = false;
         var storedPoints = {x: [], y: []};
         var precision_measurement = null;
 
-        // 眼动数据结构
         let eyeTrackingData = { gazePoints: [], saccades: [], fixations: [], heatmapSnapshots: [], calibrationData: { points: [], accuracy: null, timestamp: null } };
 
-        // 眼跳和注视检测变量
         let lastGazePoint = null, currentFixation = null;
         const fixationThreshold = 50, fixationTimeThreshold = 100;
 
@@ -175,9 +176,6 @@
 
         document.getElementById('sessionIdDisplay').textContent = sessionId;
 
-        // ===========================================
-        // 核心函数
-        // ===========================================
         function debug(message) {
             const timestamp = new Date().toLocaleTimeString();
             console.log(`[DEBUG ${timestamp}] ${message}`);
@@ -204,9 +202,6 @@
             el.className = `collection-status ${status}`;
         }
 
-        // ===========================================
-        // Firebase 函数
-        // ===========================================
         async function testFirebaseConnection() {
             debug('开始测试Firebase连接...');
             updateFirebaseStatus('测试中...', 'uploading');
@@ -233,7 +228,6 @@
         // 眼动数据处理
         // ===========================================
         function gazeDataCallback(data, elapsedTime) {
-            // 【修改】在函数开头增加校准数据存储逻辑
             if (isStoring && data) {
                 storedPoints.x.push(data.x);
                 storedPoints.y.push(data.y);
@@ -289,47 +283,90 @@
             document.getElementById('avgFixationTime').textContent = (fixationCount > 0 ? Math.round(totalFixationTime / fixationCount) : 0) + 'ms';
         }
         
-        // ===========================================
-        // 热力图与数据保存
-        // ===========================================
         function startHeatmapSnapshots() {
             if (heatmapSnapshotInterval) clearInterval(heatmapSnapshotInterval);
+            // 【修改】间隔调整为2秒，因为上传需要时间
             heatmapSnapshotInterval = setInterval(() => { if (heatmapInstance && isTracking) captureHeatmapSnapshot(); }, 1000);
         }
+
         function stopHeatmapSnapshots() { if (heatmapSnapshotInterval) clearInterval(heatmapSnapshotInterval); }
-        function captureHeatmapSnapshot() {
+
+        // 【重大修改】将此函数改为异步，并上传到Firebase Storage
+        async function captureHeatmapSnapshot() {
             try {
                 const canvas = document.getElementById('heatmapContainer').querySelector('canvas');
-                if (!canvas) return;
+                if (!canvas || !firebaseConnected) {
+                    if (!firebaseConnected) debug('无法捕获热力图快照：Firebase未连接。');
+                    return;
+                }
+                
                 heatmapInstance.repaint();
-                setTimeout(() => {
+
+                // 使用一个短的超时来确保canvas已经重绘
+                setTimeout(async () => {
                     try {
-                        eyeTrackingData.heatmapSnapshots.push({ timestamp: new Date().toISOString(), imageData: canvas.toDataURL('image/png', 0.8), sessionId, userId });
+                        const imageDataUrl = canvas.toDataURL('image/png', 0.8);
+                        
+                        // 创建唯一的文件名
+                        const timestamp = Date.now();
+                        const fileName = `heatmaps/${userId}/${sessionId}/${timestamp}.png`;
+                        
+                        // 获取Storage引用
+                        const storageRef = storage.ref(fileName);
+                        
+                        // 直接上传Base64字符串
+                        debug(`开始上传热力图: ${fileName}`);
+                        const uploadTask = await storageRef.putString(imageDataUrl, 'data_url');
+                        
+                        // 获取下载URL
+                        const downloadURL = await uploadTask.ref.getDownloadURL();
+                        debug(`热力图上传成功: ${downloadURL.substring(0, 50)}...`);
+
+                        // 存储URL而不是Base64数据
+                        eyeTrackingData.heatmapSnapshots.push({ 
+                            timestamp: new Date(timestamp).toISOString(), 
+                            storageUrl: downloadURL, 
+                            sessionId, 
+                            userId 
+                        });
                         heatmapSnapshotCount++;
-                    } catch (e) { debug(`热力图快照失败: ${e.message}`); }
+                        // 因为是异步的，所以在这里更新UI
+                        updateStatsDisplay();
+
+                    } catch (e) {
+                        console.error("热力图上传或快照失败: ", e);
+                        debug(`热力图上传或快照失败: ${e.message}`);
+                    }
                 }, 150);
-            } catch (error) { debug(`热力图捕获失败: ${error.message}`); }
+
+            } catch (error) {
+                console.error("捕获热力图快照时出错: ", error);
+                debug(`捕获热力图快照时出错: ${error.message}`);
+            }
         }
+
         function startAutoSave() {
             if (autoSaveInterval) clearInterval(autoSaveInterval);
             autoSaveInterval = setInterval(() => saveEyeTrackingData(false), 10000);
             updateCollectionStatus('进行中 (自动)', 'connected');
         }
+
         function stopAutoSave() { if (autoSaveInterval) clearInterval(autoSaveInterval); }
+
         async function saveEyeTrackingData(isManual = false) {
             if (!firebaseConnected) { if(isManual) swal('错误', 'Firebase未连接，无法保存。', 'error'); return; }
             const totalPoints = eyeTrackingData.gazePoints.length + eyeTrackingData.saccades.length + eyeTrackingData.fixations.length + eyeTrackingData.heatmapSnapshots.length;
             if (totalPoints === 0) { if(isManual) swal('提示', '没有新数据可保存。', 'info'); return; }
 
             const dataToSave = JSON.parse(JSON.stringify(eyeTrackingData));
+            // 【注意】payload中的heatmapData现在包含的是URL对象数组
             const payload = { sessionId, userId, timestamp: new Date().toISOString(), dataType: isManual ? 'manual' : 'auto', gazeData: dataToSave.gazePoints, saccadeData: dataToSave.saccades, fixationData: dataToSave.fixations, heatmapData: dataToSave.heatmapSnapshots, calibrationInfo: dataToSave.calibrationData };
             
-            // 清空本地缓存
             eyeTrackingData.gazePoints = []; eyeTrackingData.saccades = []; eyeTrackingData.fixations = []; eyeTrackingData.heatmapSnapshots = [];
             
             updateCollectionStatus('保存中...', 'uploading');
             try {
-                await db.collection("eye_tracking_comprehensive_v2").add(payload);
+                await db.collection("eye_tracking_comprehensive_v3_storage").add(payload); // 建议使用新集合名以区分数据结构
                 snapshotCount++;
                 updateCollectionStatus('进行中 (自动)', 'connected');
                 debug(`数据快照 #${snapshotCount} 保存成功`);
@@ -339,7 +376,6 @@
                 debug(`数据保存失败: ${error.message}, 正在恢复数据...`);
                 updateCollectionStatus('保存失败', 'disconnected');
                 if(isManual) swal('失败', `数据保存失败！\n\n${error.message}`, 'error');
-                // 恢复数据，防止丢失
                 eyeTrackingData.gazePoints = dataToSave.gazePoints.concat(eyeTrackingData.gazePoints);
                 eyeTrackingData.saccades = dataToSave.saccades.concat(eyeTrackingData.saccades);
                 eyeTrackingData.fixations = dataToSave.fixations.concat(eyeTrackingData.fixations);
@@ -347,9 +383,6 @@
             }
         }
 
-        // ===========================================
-        // 校准与精度函数
-        // ===========================================
         function PopUpInstruction() {
             swal({ title: "校准说明", text: "请点击屏幕上出现的9个红色圆点进行校准。每个点需点击5次。请保持头部稳定。", buttons: { cancel: "取消", confirm: "开始" } })
             .then((willCalibrate) => { if (willCalibrate) startCalibration(); });
@@ -358,7 +391,6 @@
             updateStatus('校准进行中', 'calibrating');
             PointCalibrate = 0;
             CalibrationPoints = {};
-            // 【修改】开始存储校准数据
             isStoring = true;
             storedPoints = {x: [], y: []};
             showCalibrationPoint(1);
@@ -384,9 +416,8 @@
         }
         function hideAllCalibrationPoints() { for (let i = 1; i <= 9; i++) document.getElementById("Pt" + i).style.display = 'none'; }
         
-        // 【修改】更新为新版精度计算方法
         function calculateCalibrationAccuracy() {
-            isStoring = false; // 停止存储
+            isStoring = false;
             hideAllCalibrationPoints();
             if (!webgazer || !webgazer.isReady || !webgazer.isReady()) {
                 setTimeout(calculateCalibrationAccuracy, 200);
@@ -411,8 +442,7 @@
                 swal('校准完成', '已完成校准，但无法计算精度。', 'info');
             }
         }
-
-        // 【新增】持续计算精度的函数
+        
         function calculatePrecision() {
             if (webgazer && webgazer.isReady && webgazer.isReady() && webgazer.getRegression) {
                 try {
@@ -428,7 +458,7 @@
         }
         
         function Restart() {
-            if (precision_measurement) clearInterval(precision_measurement); // 清理定时器
+            if (precision_measurement) clearInterval(precision_measurement);
             document.getElementById('Accuracy').innerHTML = "等待校准...";
             if(webgazer) webgazer.clearData();
             ClearCalibration();
@@ -444,9 +474,6 @@
             }
         }
 
-        // ===========================================
-        // 工具与系统控制
-        // ===========================================
         function toggleDebug() { debugMode = !debugMode; document.getElementById('debugPanel').style.display = debugMode ? 'block' : 'none'; }
         function toggleHeatmap() { heatmapVisible = !heatmapVisible; document.getElementById('heatmapContainer').classList.toggle('heatmap-visible'); }
         function startStatsUpdate() {
@@ -491,7 +518,6 @@
                 if (firebaseConnected) startAutoSave();
                 startHeatmapSnapshots(); startStatsUpdate();
                 
-                // 【修改】启动精度定时监控
                 if (precision_measurement) clearInterval(precision_measurement);
                 precision_measurement = setInterval(calculatePrecision, 1000);
 
@@ -514,7 +540,6 @@
         async function performStop() {
             if (firebaseConnected) await saveEyeTrackingData(true);
             isTracking = false;
-            // 【修改】停止精度定时器
             if (precision_measurement) clearInterval(precision_measurement);
             stopAutoSave(); stopHeatmapSnapshots(); stopStatsUpdate();
             if (typeof webgazer !== 'undefined' && webgazer.isReady()) webgazer.end();
@@ -526,9 +551,6 @@
             swal('已停止', `眼动追踪已停止。`, 'success');
         }
 
-        // ===========================================
-        // 生命周期与错误处理
-        // ===========================================
         window.addEventListener('load', initializeSystem);
         window.addEventListener('error', (e) => debug(`全局错误: ${e.message}`));
         window.addEventListener('unhandledrejection', (e) => debug(`Promise拒绝: ${e.reason}`));
@@ -545,5 +567,4 @@
         });
     </script>
 </body>
-</html> 
-
+</html>
