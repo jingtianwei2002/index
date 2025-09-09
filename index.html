@@ -160,6 +160,7 @@
         let heatmapInstance = null, gazeCount = 0, snapshotCount = 0, heatmapSnapshotCount = 0, saccadeCount = 0, fixationCount = 0, totalFixationTime = 0;
         let startTime = Date.now();
         let isTracking = false, webgazerReady = false, debugMode = false, heatmapVisible = false, librariesLoaded = false, firebaseConnected = false;
+        let currentPageUrl = window.location.href;
         
         var PointCalibrate = 0;
         var CalibrationPoints = {};
@@ -290,6 +291,82 @@
         }
 
         function stopHeatmapSnapshots() { if (heatmapSnapshotInterval) clearInterval(heatmapSnapshotInterval); }
+
+        // ===========================================
+        // 热力图重置和导航处理
+        // ===========================================
+        function resetHeatmapData() {
+            debug('开始重置热力图数据...');
+            try {
+                if (heatmapInstance) {
+                    // 清除现有热力图数据
+                    heatmapInstance.setData({ data: [], max: 0 });
+                    debug('热力图数据已清除');
+                }
+                // 重置相关计数器
+                gazeCount = 0;
+                heatmapSnapshotCount = 0;
+                updateStatsDisplay();
+                debug('热力图重置完成');
+            } catch (error) {
+                console.error('重置热力图数据时出错:', error);
+                debug(`重置热力图数据失败: ${error.message}`);
+            }
+        }
+
+        function reinitializeHeatmap() {
+            debug('重新初始化热力图实例...');
+            try {
+                const container = document.getElementById('heatmapContainer');
+                if (container && typeof h337 !== 'undefined') {
+                    // 清空容器
+                    container.innerHTML = '';
+                    // 创建新的热力图实例
+                    heatmapInstance = h337.create({
+                        container: container,
+                        radius: 25,
+                        maxOpacity: 0.6,
+                        minOpacity: 0.1,
+                        blur: 0.8
+                    });
+                    debug('热力图实例重新初始化完成');
+                } else {
+                    debug('无法重新初始化热力图：容器或h337库不可用');
+                }
+            } catch (error) {
+                console.error('重新初始化热力图时出错:', error);
+                debug(`重新初始化热力图失败: ${error.message}`);
+            }
+        }
+
+        function handlePageNavigation() {
+            debug('检测到页面导航，处理热力图重置...');
+            const newUrl = window.location.href;
+            if (newUrl !== currentPageUrl) {
+                debug(`页面URL变化: ${currentPageUrl} -> ${newUrl}`);
+                currentPageUrl = newUrl;
+                
+                // 如果正在追踪，保存当前数据并重置热力图
+                if (isTracking) {
+                    // 保存当前热力图数据
+                    if (firebaseConnected && eyeTrackingData.gazePoints.length > 0) {
+                        saveEyeTrackingData(false).then(() => {
+                            debug('导航前数据已保存');
+                        }).catch(error => {
+                            debug(`导航前数据保存失败: ${error.message}`);
+                        });
+                    }
+                    
+                    // 重置热力图
+                    resetHeatmapData();
+                    reinitializeHeatmap();
+                    
+                    // 重置开始时间
+                    startTime = Date.now();
+                    debug('导航处理完成，热力图已重置');
+                }
+            }
+        }
 
         // 【重大修改】将此函数改为异步，并上传到Firebase Storage
         async function captureHeatmapSnapshot() {
@@ -565,6 +642,66 @@
                 document.visibilityState === 'hidden' ? webgazer.pause() : webgazer.resume();
             }
         });
+
+        // ===========================================
+        // 导航事件监听器
+        // ===========================================
+        // 监听页面显示事件（用户返回页面时）
+        window.addEventListener('pageshow', (e) => {
+            debug('页面显示事件触发');
+            if (e.persisted) {
+                debug('页面从缓存恢复，检查热力图状态');
+                handlePageNavigation();
+            }
+        });
+
+        // 监听历史记录变化（前进/后退按钮）
+        window.addEventListener('popstate', (e) => {
+            debug('历史记录变化事件触发');
+            setTimeout(handlePageNavigation, 100); // 延迟执行以确保URL已更新
+        });
+
+        // 监听hash变化（单页应用路由）
+        window.addEventListener('hashchange', (e) => {
+            debug('Hash变化事件触发');
+            handlePageNavigation();
+        });
+
+        // 定期检查URL变化（作为后备机制）
+        let urlCheckInterval = null;
+        function startUrlWatcher() {
+            if (urlCheckInterval) clearInterval(urlCheckInterval);
+            urlCheckInterval = setInterval(() => {
+                if (window.location.href !== currentPageUrl) {
+                    debug('定期检查发现URL变化');
+                    handlePageNavigation();
+                }
+            }, 1000);
+        }
+
+        function stopUrlWatcher() {
+            if (urlCheckInterval) {
+                clearInterval(urlCheckInterval);
+                urlCheckInterval = null;
+            }
+        }
+
+        // 在系统初始化后启动URL监视器
+        const originalInitializeSystem = initializeSystem;
+        initializeSystem = async function() {
+            await originalInitializeSystem();
+            if (librariesLoaded) {
+                startUrlWatcher();
+                debug('URL监视器已启动');
+            }
+        };
+
+        // 在停止追踪时停止URL监视器
+        const originalPerformStop = performStop;
+        performStop = async function() {
+            stopUrlWatcher();
+            await originalPerformStop();
+        };
     </script>
 </body>
 </html>
